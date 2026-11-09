@@ -138,13 +138,18 @@ class Executor:
 
             if last_error:
                 self._record_error(execution, step.step_id, "timeout" if last_error == "timeout" else "tool_error", last_error, True)
-                # Skip optional step if dependents allow (no dependents in linear subset) → partial result
-                return partial_result(completed, f"step {step.step_id} failed: {last_error}")
+                execution.status = "failed"; execution.error = f"step {step.step_id} failed: {last_error}"
+                execution.result = partial_result(completed, f"step {step.step_id} failed: {last_error}")
+                self.db.commit()
+                return execution.result
 
             # Sanitize + persist invocation
             if isinstance(result, dict) and "error" in result:
                 self._record_error(execution, step.step_id, "tool_error", str(result["error"]), False)
-                return partial_result(completed, f"tool error: {result['error']}")
+                execution.status = "failed"; execution.error = f"tool error: {result['error']}"
+                execution.result = partial_result(completed, f"tool error: {result['error']}")
+                self.db.commit()
+                return execution.result
             if isinstance(result, str):
                 result = {"output": sanitize_tool_output(result)}
             elif isinstance(result, dict):

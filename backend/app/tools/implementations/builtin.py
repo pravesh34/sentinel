@@ -91,7 +91,7 @@ async def _python_sandbox(args: dict) -> dict:
             return {"error": "blocked dunder access"}
     ns: dict = {}
     try:
-        exec(compile(tree, "<sandbox>", "exec"), {"__builtins__": {"abs": abs, "min": min, "max": max, "sum": sum, "len": len, "round": round}}, ns)  # noqa: S102
+        exec(compile(tree, "<sandbox>", "exec"), {"__builtins__": {"abs": abs, "min": min, "max": max, "sum": sum, "len": len, "round": round, "print": print}}, ns)  # noqa: S102
         return {"output": ns.get("result", "ok")}
     except Exception as e:
         return {"error": str(e)}

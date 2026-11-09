@@ -42,7 +42,7 @@ class HTTPProvider(LLMProvider):
         import httpx
         resp = httpx.post(f"{self.base_url}/chat/completions",
                           headers={"Authorization": f"Bearer {self.api_key}"},
-                          json={"model": model, "messages": messages}, timeout=60)
+                          json={"model": model, "messages": messages, "temperature": 0}, timeout=60)
         resp.raise_for_status()
         data = resp.json()
         text = data["choices"][0]["message"]["content"]
