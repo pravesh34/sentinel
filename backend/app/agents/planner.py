@@ -8,6 +8,7 @@ class Planner:
     def __init__(self, provider: LLMProvider | None = None, registry: ToolRegistry | None = None):
         self.provider = provider or MockLLM()
         self.registry = registry
+        self.last_result = None  # LLMResult of the planning call (for cost accounting)
 
     def plan(self, objective: str, model: str = "mock-llm-1", allowed_tools: list[str] | None = None) -> ExecutionPlan:
         tool_ids = [t.tool_id for t in self.registry.list_tools()] if self.registry else ["web_search", "summarizer"]
@@ -18,6 +19,7 @@ class Planner:
             {"role": "user", "content": f"Objective: {objective}\nReply ONLY with JSON like: {{\"steps\":[{{\"step_id\":\"s1\",\"description\":\"...\",\"selected_tool\":\"web_search\",\"expected_output\":\"sources\",\"estimated_cost\":0.001,\"risk_level\":\"MEDIUM\",\"args\":{{\"query\":\"...\"}}}}, ...]}}"},
         ]
         result = self.provider.chat(messages, model=model)
+        self.last_result = result  # include LLM token/cost usage in run accounting
         plan = self._parse(result.text, objective)
         # Validate against registry: unknown tools → drop/replace with calculator? Fail closed: raise.
         if self.registry:

@@ -111,7 +111,11 @@ def cost(eid: str, user: User = Depends(get_current_user), db: Session = Depends
     if not e: raise HTTPException(404, "not found")
     records = db.query(CostRecord).filter_by(execution_id=eid).all()
     return {"execution_id": eid, "total_cost": e.total_cost or 0.0, "total_tokens": e.total_tokens or 0,
-            "records": [{"provider": r.provider, "model": r.model, "cost": r.cost, "tokens": r.total_tokens} for r in records]}
+            "llm_input_tokens": sum(r.input_tokens or 0 for r in records),
+            "llm_output_tokens": sum(r.output_tokens or 0 for r in records),
+            "records": [{"provider": r.provider, "model": r.model, "cost": r.cost, "tokens": r.total_tokens,
+                         "input_tokens": r.input_tokens or 0, "output_tokens": r.output_tokens or 0,
+                         "estimated": bool(r.estimated)} for r in records]}
 
 # ---------- Approvals ----------
 @router.get("/approvals", response_model=list[ApprovalOut])

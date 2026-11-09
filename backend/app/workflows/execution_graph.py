@@ -35,6 +35,6 @@ def build_graph():
     graph.add_edge("finalize_execution", END)
     return graph.compile()
 
-async def run_sequential(executor, execution, plan) -> dict:
+async def run_sequential(executor, execution, plan, **kwargs) -> dict:
     """Fallback execution path with identical guarantees (used by worker/tests)."""
-    return await executor.run(execution, plan)
+    return await executor.run(execution, plan, **kwargs)

@@ -26,10 +26,53 @@ async def _json_parser(args: dict) -> dict:
     except Exception as e:
         return {"error": str(e)}
 
+def _search_env_key() -> tuple[str, str]:
+    """Return (provider, key) for live search. Prefers Tavily, then SerpApi."""
+    import os
+    tavily = os.getenv("TAVILY_API_KEY", "")
+    serp = os.getenv("SERPAPI_API_KEY", "")
+    try:
+        from ..config import settings  # type: ignore  # avoid import cycle at module load
+        tavily = tavily or settings.tavily_api_key
+        serp = serp or settings.serpapi_api_key
+    except Exception:
+        pass
+    if tavily: return "tavily", tavily
+    if serp: return "serpapi", serp
+    return "", ""
+
 async def _web_search(args: dict) -> dict:
+    """Live search via Tavily/SerpApi when a key is configured; otherwise labeled mock.
+
+    Live path is failure-safe: HTTP errors return {"error": ...} (bounded)
+    rather than crashing — caller can retry or fall back to mock.
+    """
     query = str(args.get("query", ""))
-    # Offline mock: deterministic labeled results. Real integration: set SERPAPI/Tavily key + swap handler.
-    return {"query": query, "results": [{"title": f"Mock result for: {query}", "url": "https://example.com/mock", "snippet": "Mock offline result — enable real search provider for live data."}], "mock": True}
+    max_results = int(args.get("max_results", 5))
+    provider, key = _search_env_key()
+    if not key:
+        return {"query": query, "results": [{"title": f"Mock result for: {query}", "url": "https://example.com/mock", "snippet": "Mock offline result — set TAVILY_API_KEY or SERPAPI_API_KEY for live data."}], "mock": True, "provider": "mock"}
+    import httpx
+    try:
+        async with httpx.AsyncClient(timeout=15) as c:
+            if provider == "tavily":
+                resp = await c.post("https://api.tavily.com/search", json={
+                    "api_key": key, "query": query, "max_results": max_results, "include_answer": False,
+                })
+                resp.raise_for_status()
+                data = resp.json()
+                results = [{"title": r.get("title", ""), "url": r.get("url", ""), "snippet": r.get("content", "")[:500]} for r in data.get("results", [])]
+                return {"query": query, "results": results, "mock": False, "provider": "tavily"}
+            # SerpApi
+            resp = await c.get("https://serpapi.com/search.json", params={
+                "engine": "google", "q": query, "api_key": key, "num": max_results,
+            })
+            resp.raise_for_status()
+            data = resp.json()
+            results = [{"title": r.get("title", ""), "url": r.get("link", ""), "snippet": r.get("snippet", "")[:500]} for r in data.get("organic_results", [])]
+            return {"query": query, "results": results, "mock": False, "provider": "serpapi"}
+    except Exception as e:
+        return {"query": query, "error": f"live search failed: {e}", "mock": False, "provider": provider}
 
 async def _file_reader(args: dict) -> dict:
     # Restricted to ./data_sandbox — never arbitrary FS access in prod without allowlist.
@@ -78,20 +121,74 @@ async def _http_request(args: dict) -> dict:
     except Exception as e:
         return {"error": str(e)}
 
-async def _python_sandbox(args: dict) -> dict:
-    code = str(args.get("code", ""))
-    # Block imports of os/sys/subprocess/socket, dunders, IO
-    tree = ast.parse(code)
+# --- Sandbox pre-flight ---------------------------------------------------------
+# Statically reject code that cannot run BEFORE asking a human to approve it.
+# Checks: parse errors, blocked imports/dunders, undefined names, print-only scripts.
+
+_SANDBOX_BUILTINS = {"abs", "min", "max", "sum", "len", "round", "print", "range", "dict", "list", "set", "tuple", "int", "float", "str", "bool"}
+
+def preflight_sandbox(code: str) -> str | None:
+    """Return an error string if sandbox code cannot succeed, else None.
+
+    Rejects:
+      - syntax errors / empty programs
+      - blocked imports (os/sys/subprocess/socket/shutil/pathlib) / dunder access
+      - reads of undefined names (hallucinated variables like langgraph_summary)
+      - print-only scripts that assign no `result`
+    This runs BEFORE the HITL approval gate in the executor.
+    """
+    if not code or not code.strip():
+        return "sandbox: empty program"
+    try:
+        tree = ast.parse(code)
+    except SyntaxError as e:
+        return f"sandbox preflight: syntax error: {e}"
     blocked = {"os", "sys", "subprocess", "socket", "shutil", "pathlib"}
+    defined: set[str] = set(_SANDBOX_BUILTINS)
+    # Collect definitions: assignments, function defs, imports (allowed only), comprehension targets etc.
+    has_assign = False
+    has_print = False
     for node in ast.walk(tree):
         if isinstance(node, (ast.Import, ast.ImportFrom)):
             for a in getattr(node, "names", []):
-                if a.name.split(".")[0] in blocked: return {"error": f"blocked import: {a.name}"}
+                if a.name.split(".")[0] in blocked:
+                    return f"sandbox preflight: blocked import: {a.name}"
         if isinstance(node, ast.Attribute) and node.attr.startswith("__"):
-            return {"error": "blocked dunder access"}
+            return "sandbox preflight: blocked dunder access"
+        if isinstance(node, ast.Assign):
+            has_assign = True
+            for t in node.targets:
+                for n in ast.walk(t):
+                    if isinstance(n, ast.Name): defined.add(n.id)
+        if isinstance(node, (ast.For, ast.While)):
+            for n in ast.walk(node):
+                if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Store): defined.add(n.id)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            defined.add(node.name)
+            for a in node.args.args: defined.add(a.arg)
+            for n in ast.walk(node):
+                if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Store): defined.add(n.id)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "print":
+            has_print = True
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
+            if node.id not in defined:
+                return f"sandbox preflight: undefined name: {node.id}"
+    if has_print and not has_assign:
+        return "sandbox preflight: print-only script assigns no `result`"
+    return None
+
+async def _python_sandbox(args: dict) -> dict:
+    code = str(args.get("code", ""))
+    err = preflight_sandbox(code)
+    if err: return {"error": err}
+    try:
+        tree = ast.parse(code)
+    except SyntaxError as e:
+        return {"error": f"sandbox preflight: syntax error: {e}"}
     ns: dict = {}
     try:
-        exec(compile(tree, "<sandbox>", "exec"), {"__builtins__": {"abs": abs, "min": min, "max": max, "sum": sum, "len": len, "round": round, "print": print}}, ns)  # noqa: S102
+        exec(compile(tree, "<sandbox>", "exec"), {"__builtins__": {"abs": abs, "min": min, "max": max, "sum": sum, "len": len, "round": round, "print": print, "range": range, "dict": dict, "list": list, "set": set, "tuple": tuple, "int": int, "float": float, "str": str, "bool": bool}}, ns)  # noqa: S102
         return {"output": ns.get("result", "ok")}
     except Exception as e:
         return {"error": str(e)}

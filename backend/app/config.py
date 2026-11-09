@@ -20,7 +20,9 @@ class Settings(BaseSettings):
     groq_api_key: str = ""
     anthropic_api_key: str = ""
     gemini_api_key: str = ""
-    tavily_api_key: str = ""  # for live web_search (future wiring)
+    tavily_api_key: str = ""  # for live web_search (Tavily)
+    serpapi_api_key: str = ""  # SerpApi alternative
+    web_search_max_results: int = 5
     # Hard defaults (configurable per execution)
     max_steps: int = 20
     max_tool_calls: int = 30

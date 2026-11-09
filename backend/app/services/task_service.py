@@ -10,6 +10,7 @@ from ..providers.base import get_provider
 from ..models.entities import ApiCredential
 from ..services.security import decrypt_secret
 from ..config import settings
+from ..cost.tracker import CostTracker
 from ..tools.registry import build_default_registry
 from ..observability.logging import correlation_id_ctx, get_logger
 from ..workflows.execution_graph import run_sequential
@@ -29,6 +30,7 @@ class TaskService:
             max_runtime_s=payload.max_runtime_s, max_tokens=payload.max_tokens,
             allowed_tools=payload.allowed_tools, provider=payload.provider, model=payload.model,
             status="running", correlation_id=correlation_id_ctx.get(),
+            started_at=datetime.now(timezone.utc),
         )
         self.db.add(execution); self.db.commit(); self.db.refresh(execution)
 
@@ -37,17 +39,21 @@ class TaskService:
         providers = [get_provider(payload.provider, api_key, base_url)]
         if settings.fallback_provider and settings.fallback_provider != payload.provider:
             providers.append(get_provider(settings.fallback_provider))
-        plan, last_err = None, None
+        plan, last_err, planner_usage = None, None, None
         for prov in providers:
             try:
-                plan = Planner(provider=prov, registry=self.registry).plan(
+                planner = Planner(provider=prov, registry=self.registry)
+                plan = planner.plan(
                     payload.objective, model=payload.model, allowed_tools=payload.allowed_tools)
+                lr = planner.last_result
+                planner_usage = {"input_tokens": lr.input_tokens, "output_tokens": lr.output_tokens} if lr else None
                 break
             except Exception as e:  # noqa: BLE001 — fallthrough to next provider
                 last_err = e
                 log.warning("provider %s failed: %s", prov.name, e)
         if plan is None:
-            execution.status = "failed"; execution.error = f"planning failed: {last_err}"; self.db.commit()
+            execution.status = "failed"; execution.error = f"planning failed: {last_err}"
+            execution.finished_at = datetime.now(timezone.utc); self.db.commit()
             return execution
 
         # Validate plan against limits before execution
@@ -67,15 +73,18 @@ class TaskService:
         self.db.commit()
 
         self._checkpoint(execution, {"plan": [s.model_dump() for s in plan.steps], "step_idx": 0})
-        executor = Executor(self.registry, self.db, self.hot_state)
+        tracker = CostTracker(provider=execution.provider, model=execution.model)
+        executor = Executor(self.registry, self.db, self.hot_state, cost_tracker=tracker)
         try:
-            result = await run_sequential(executor, execution, plan)
-            if execution.status not in ("completed",):
-                # partial/budget/limit already set by executor
-                pass
-            else:
+            if planner_usage:
+                # Pass-through field in state for the executor (kept in checkpoint for resume parity)
+                self._checkpoint(execution, {"planner_usage": planner_usage, "step_idx": 0})
+            # Inject planner_usage via keyword so executor records real LLM spend
+            result = await executor.run(execution, plan, planner_usage=planner_usage)
+            if execution.status == "completed":
                 execution.result = result
-            self._record_cost(execution)
+            execution.finished_at = datetime.now(timezone.utc)
+            self._record_cost(execution, tracker)
             self._checkpoint(execution, {"result_status": execution.status})
         except ApprovalPending as e:
             execution.status = "awaiting_approval"
@@ -97,10 +106,17 @@ class TaskService:
         steps = [PlanStep(**s) for s in plan_row.steps]
         plan = EP(steps=steps, estimated_cost=plan_row.estimated_cost)
         execution.status = "running"; self.db.commit()
-        executor = Executor(self.registry, self.db, self.hot_state)
+        # Seed tracker from prior cost records so planner spend isn't lost on resume
+        tracker = CostTracker(provider=execution.provider, model=execution.model)
+        for rec in self.db.query(CostRecord).filter_by(execution_id=execution.id).all():
+            tracker.total_cost += rec.cost or 0.0
+            tracker.total_tokens += rec.total_tokens or 0
+        executor = Executor(self.registry, self.db, self.hot_state, cost_tracker=tracker)
         try:
-            await run_sequential(executor, execution, plan)
-            self._record_cost(execution)
+            # Planner usage for resume: look in checkpoints (planner call already accounted)
+            await executor.run(execution, plan, planner_usage=None)
+            execution.finished_at = datetime.now(timezone.utc)
+            self._record_cost(execution, tracker)
         except ApprovalPending:
             execution.status = "awaiting_approval"; self.db.commit()
         return execution
@@ -132,11 +148,29 @@ class TaskService:
         except Exception:
             self.db.rollback()
 
-    def _record_cost(self, execution: Execution):
+    def _record_cost(self, execution: Execution, tracker=None):
         try:
-            self.db.add(CostRecord(execution_id=execution.id, user_id=execution.user_id, provider=execution.provider,
-                                   model=execution.model, total_tokens=execution.total_tokens or 0,
-                                   cost=execution.total_cost or 0.0, estimated=False))
+            if tracker is not None and tracker.records:
+                # One row per accounting record: LLM calls carry real input/output tokens
+                for rec in tracker.records:
+                    if "input_tokens" in rec:
+                        self.db.add(CostRecord(execution_id=execution.id, user_id=execution.user_id,
+                                               provider=rec.get("provider", execution.provider),
+                                               model=rec.get("model", execution.model),
+                                               input_tokens=rec.get("input_tokens", 0),
+                                               output_tokens=rec.get("output_tokens", 0),
+                                               total_tokens=rec.get("total_tokens", 0),
+                                               cost=rec.get("cost", 0.0),
+                                               estimated=rec.get("estimated", False)))
+                    else:
+                        self.db.add(CostRecord(execution_id=execution.id, user_id=execution.user_id,
+                                               provider=execution.provider, model=execution.model,
+                                               total_tokens=0,  # tool cost only, no LLM tokens
+                                               cost=rec.get("cost", 0.0), estimated=True))
+            else:
+                self.db.add(CostRecord(execution_id=execution.id, user_id=execution.user_id, provider=execution.provider,
+                                       model=execution.model, total_tokens=execution.total_tokens or 0,
+                                       cost=execution.total_cost or 0.0, estimated=False))
             self.db.commit()
         except Exception:
             self.db.rollback()

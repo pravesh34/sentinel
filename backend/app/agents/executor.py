@@ -29,13 +29,21 @@ class Executor:
         self.hot_state = hot_state
         self.tracker = cost_tracker or CostTracker()
 
-    async def run(self, execution, plan, dry_run: bool = False) -> dict:
-        """Execute plan. Returns result dict. Raises ApprovalPending for HITL."""
+    async def run(self, execution, plan, dry_run: bool = False, planner_usage: dict | None = None) -> dict:
+        """Execute plan. Returns result dict. Raises ApprovalPending for HITL.
+
+        planner_usage: {"input_tokens": int, "output_tokens": int} from the planning LLM call
+        (pass-through from Planner.last_result) — recorded as real confirmed spend.
+        """
         limits = ExecutionLimits(max_steps=execution.max_steps, max_tool_calls=execution.max_tool_calls,
                                  max_cost=execution.max_cost, max_tokens=execution.max_tokens,
                                  max_runtime_s=execution.max_runtime_s)
         tracker = self.tracker
         tracker.provider = execution.provider; tracker.model = execution.model
+        if planner_usage and not getattr(self, "_planner_recorded", False):
+            # Record planner LLM call as real (confirmed) spend. Idempotent per Executor instance.
+            tracker.record_llm(planner_usage.get("input_tokens", 0), planner_usage.get("output_tokens", 0), confirmed=True)
+            self._planner_recorded = True  # type: ignore[attr-defined]
         completed: list[dict] = []
         tool_calls = 0
         committed: set[str] = set()
@@ -82,6 +90,16 @@ class Executor:
                     self._record_error(execution, step.step_id, "invalid_args", ";".join(errs), False)
                     execution.status = "failed"; execution.error = f"invalid args: {errs}"; self.db.commit()
                     return partial_result(completed, f"invalid args: {errs}")
+
+            # Sandbox pre-flight: reject code that cannot run BEFORE asking human approval
+            if tool and tool.tool_id == "python_sandbox":
+                from ..tools.implementations.builtin import preflight_sandbox
+                pre_err = preflight_sandbox(str(args.get("code", "")))
+                if pre_err:
+                    self._record_error(execution, step.step_id, "sandbox_preflight", pre_err, False)
+                    execution.status = "failed"; execution.error = pre_err
+                    execution.result = partial_result(completed, pre_err); self.db.commit()
+                    return execution.result
 
             # HITL gate
             if tool and requires_approval(risk, execution.mode):
@@ -164,8 +182,7 @@ class Executor:
             self._audit(execution, "step_completed", {"step_id": step.step_id, "tool": step.selected_tool})
             self.db.commit()
 
-        # Finalize
-        tracker.record_llm(input_tokens=tracker.total_tokens or 10, output_tokens=20)  # planning cost accounted once
+        # Finalize — planner LLM spend already recorded at run() start (real, confirmed).
         execution.total_cost = tracker.total_cost
         execution.total_tokens = tracker.total_tokens
         execution.status = "completed"

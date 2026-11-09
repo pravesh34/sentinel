@@ -62,7 +62,10 @@ LLM providers (all behind `providers/base.py`): mock (default, offline), OpenAI,
      -H 'Content-Type: application/json' -d '{"objective":"...","provider":"openai","model":"gpt-4o-mini"}'
    ```
    Server fallback: set `OPENAI_API_KEY` / `GROQ_API_KEY` / `ANTHROPIC_API_KEY` / `GEMINI_API_KEY`, `DEFAULT_PROVIDER`, `FALLBACK_PROVIDER` in `.env` (see `.env.example`).
-   OpenAI/Groq use OpenAI-compatible endpoints; for Anthropic/Google native APIs set `base_url` on the credential. Real web search: swap `web_search` handler for SerpAPI/Tavily key (currently labeled mock offline).
+   OpenAI/Groq use OpenAI-compatible endpoints; for Anthropic/Google native APIs set `base_url` on the credential.
+   **Live web search:** set `TAVILY_API_KEY` (tavily.com) or `SERPAPI_API_KEY` (serpapi.com) in `.env` → `docker compose up --build`. Without a key, `web_search` returns labeled mock results.
+   **Costs:** `/executions/{id}/cost` shows real planner LLM usage (`llm_input_tokens`/`llm_output_tokens`, confirmed spend) + per-call tool costs.
+   **Sandbox pre-flight:** `python_sandbox` code is statically checked for undefined names/dunder/blocked imports/print-only scripts *before* any approval is requested.
 
 ## Project Structure
 
