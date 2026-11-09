@@ -7,6 +7,9 @@ from ..models.entities import Execution, ExecutionPlan, ExecutionStep, CostRecor
 from ..agents.planner import Planner
 from ..agents.executor import Executor, ApprovalPending
 from ..providers.base import get_provider
+from ..models.entities import ApiCredential
+from ..services.security import decrypt_secret
+from ..config import settings
 from ..tools.registry import build_default_registry
 from ..observability.logging import correlation_id_ctx, get_logger
 from ..workflows.execution_graph import run_sequential
@@ -29,12 +32,22 @@ class TaskService:
         )
         self.db.add(execution); self.db.commit(); self.db.refresh(execution)
 
-        provider = get_provider(payload.provider)
-        planner = Planner(provider=provider, registry=self.registry)
-        try:
-            plan = planner.plan(payload.objective, model=payload.model, allowed_tools=payload.allowed_tools)
-        except Exception as e:
-            execution.status = "failed"; execution.error = f"planning failed: {e}"; self.db.commit()
+        # Resolve API key: per-user credential (default for provider) → env fallback → mock
+        api_key, base_url = self._resolve_key(user_id, payload.provider)
+        providers = [get_provider(payload.provider, api_key, base_url)]
+        if settings.fallback_provider and settings.fallback_provider != payload.provider:
+            providers.append(get_provider(settings.fallback_provider))
+        plan, last_err = None, None
+        for prov in providers:
+            try:
+                plan = Planner(provider=prov, registry=self.registry).plan(
+                    payload.objective, model=payload.model, allowed_tools=payload.allowed_tools)
+                break
+            except Exception as e:  # noqa: BLE001 — fallthrough to next provider
+                last_err = e
+                log.warning("provider %s failed: %s", prov.name, e)
+        if plan is None:
+            execution.status = "failed"; execution.error = f"planning failed: {last_err}"; self.db.commit()
             return execution
 
         # Validate plan against limits before execution
@@ -94,6 +107,23 @@ class TaskService:
 
     def cancel(self, execution: Execution):
         execution.status = "cancelled"; execution.finished_at = datetime.now(timezone.utc); self.db.commit()
+
+    def _resolve_key(self, user_id: str, provider_name: str) -> tuple[str, str]:
+        """Return (api_key, base_url). Never logs or returns the key elsewhere."""
+        cred = (self.db.query(ApiCredential)
+                .filter_by(user_id=user_id, provider=provider_name.lower())
+                .order_by(ApiCredential.is_default.desc())
+                .first())
+        if cred:
+            try:
+                return decrypt_secret(cred.encrypted_key), cred.base_url or ""
+            except Exception:
+                log.warning("failed to decrypt credential for %s", provider_name)
+                return "", ""
+        env_keys = {"openai": settings.openai_api_key, "groq": settings.groq_api_key,
+                    "anthropic": settings.anthropic_api_key, "google": settings.gemini_api_key,
+                    "gemini": settings.gemini_api_key}
+        return env_keys.get(provider_name.lower(), ""), ""
 
     def _checkpoint(self, execution: Execution, state: dict):
         try:

@@ -42,10 +42,17 @@ def me(user: User = Depends(get_current_user)):
 
 @router.post("/auth/credentials")
 def add_credential(payload: CredentialIn, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    db.add(ApiCredential(user_id=user.id, provider=payload.provider, encrypted_key=encrypt_secret(payload.api_key),
+    db.add(ApiCredential(user_id=user.id, provider=payload.provider.lower(), encrypted_key=encrypt_secret(payload.api_key),
                          base_url=payload.base_url, is_default=payload.is_default))
     db.commit()
     return {"ok": True, "note": "key stored encrypted, never returned"}
+
+@router.get("/auth/credentials")
+def list_credentials(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """List providers without ever returning key material."""
+    return [{"provider": c.provider, "base_url": c.base_url or "", "is_default": bool(c.is_default),
+             "key_hint": "●●●● (stored encrypted)"}
+            for c in db.query(ApiCredential).filter_by(user_id=user.id).all()]
 
 # ---------- Executions ----------
 @router.post("/executions", response_model=ExecutionOut)

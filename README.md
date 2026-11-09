@@ -50,7 +50,19 @@ cd frontend && npm install && npm run dev
 
 Python 3.12+ FastAPI Pydantic v2 SQLAlchemy 2 PostgreSQL Redis LangGraph LangChain LangSmith · Next.js TypeScript Tailwind shadcn-style Recharts React Flow WebSockets · Docker Compose Nginx GitHub Actions Pytest Ruff MyPy Alembic.
 
-LLM providers (all behind `providers/base.py`): mock (default, offline), OpenAI, Google Gemini, Groq, Anthropic — configure per-user keys via `POST /api/v1/auth/credentials` (Fernet-encrypted). Real web search: swap `web_search` handler for SerpAPI/Tavily key (currently labeled mock offline).
+LLM providers (all behind `providers/base.py`): mock (default, offline), OpenAI, Google Gemini, Groq, Anthropic.
+
+**Add an API key (2 ways):**
+1. **Dashboard (recommended):** open http://localhost:3000 → "API Keys" panel → pick provider, paste key, Save Key. Pick provider + model in Task Console and Execute. Keys are Fernet-encrypted, never returned by any API.
+2. **API/curl:**
+   ```bash
+   curl -X POST http://localhost:8000/api/v1/auth/credentials -H "Authorization: Bearer $TOKEN" \
+     -H 'Content-Type: application/json' -d '{"provider":"openai","api_key":"sk-...","is_default":true}'
+   curl -X POST http://localhost:8000/api/v1/executions -H "Authorization: Bearer $TOKEN" \
+     -H 'Content-Type: application/json' -d '{"objective":"...","provider":"openai","model":"gpt-4o-mini"}'
+   ```
+   Server fallback: set `OPENAI_API_KEY` / `GROQ_API_KEY` / `ANTHROPIC_API_KEY` / `GEMINI_API_KEY`, `DEFAULT_PROVIDER`, `FALLBACK_PROVIDER` in `.env` (see `.env.example`).
+   OpenAI/Groq use OpenAI-compatible endpoints; for Anthropic/Google native APIs set `base_url` on the credential. Real web search: swap `web_search` handler for SerpAPI/Tavily key (currently labeled mock offline).
 
 ## Project Structure
 

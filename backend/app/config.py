@@ -12,8 +12,15 @@ class Settings(BaseSettings):
     access_token_expire_min: int = 60*24
     default_provider: str = "mock"
     default_model: str = "mock-llm-1"
+    fallback_provider: str = ""  # e.g. "groq" — tried if primary fails
     langsmith_api_key: str = ""
     langsmith_project: str = "sentinel"
+    # Optional server-side fallback keys (per-user keys via /auth/credentials take priority)
+    openai_api_key: str = ""
+    groq_api_key: str = ""
+    anthropic_api_key: str = ""
+    gemini_api_key: str = ""
+    tavily_api_key: str = ""  # for live web_search (future wiring)
     # Hard defaults (configurable per execution)
     max_steps: int = 20
     max_tool_calls: int = 30

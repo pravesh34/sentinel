@@ -15,6 +15,12 @@ export default function Page() {
   const [mode, setMode] = useState("supervised");
   const [maxSteps, setMaxSteps] = useState(20);
   const [maxCost, setMaxCost] = useState(1.0);
+  const [provider, setProvider] = useState("mock");
+  const [model, setModel] = useState("mock-llm-1");
+  const [credProvider, setCredProvider] = useState("openai");
+  const [credKey, setCredKey] = useState("");
+  const [credBaseUrl, setCredBaseUrl] = useState("");
+  const [credentials, setCredentials] = useState<any[]>([]);
   const [overview, setOverview] = useState<any>(null);
   const [execs, setExecs] = useState<Exec[]>([]);
   const [tools, setTools] = useState<Tool[]>([]);
@@ -29,6 +35,7 @@ export default function Page() {
       setExecs(await api("/api/v1/executions"));
       setTools(await api("/api/v1/tools"));
       setApprovals(await api("/api/v1/approvals"));
+      setCredentials(await api("/api/v1/auth/credentials"));
     } catch (e: any) { setMsg(String(e.message || e)); }
   }
   useEffect(() => { refresh(); }, [loggedIn]);
@@ -58,7 +65,7 @@ export default function Page() {
     setMsg("Submitting…");
     const res = await api("/api/v1/executions", {
       method: "POST",
-      body: JSON.stringify({ objective, mode, max_steps: Number(maxSteps), max_cost: Number(maxCost) }),
+      body: JSON.stringify({ objective, mode, max_steps: Number(maxSteps), max_cost: Number(maxCost), provider, model }),
     });
     setMsg(`Execution ${res.id} → ${res.status}`);
     refresh();
@@ -113,7 +120,12 @@ export default function Page() {
           </select>
           <input className="input" type="number" value={maxSteps} onChange={e => setMaxSteps(Number(e.target.value))} placeholder="max steps" />
           <input className="input" type="number" step="0.01" value={maxCost} onChange={e => setMaxCost(Number(e.target.value))} placeholder="max cost" />
-          <button className="btn" onClick={submitTask}>Execute</button>
+          <select className="input" value={provider} onChange={e => setProvider(e.target.value)}>
+            <option value="mock">mock (offline)</option><option value="openai">OpenAI</option>
+            <option value="groq">Groq</option><option value="anthropic">Anthropic</option><option value="google">Google Gemini</option>
+          </select>
+          <input className="input" value={model} onChange={e => setModel(e.target.value)} placeholder="model (e.g. gpt-4o-mini)" />
+          <button className="btn col-span-2 md:col-span-4" onClick={submitTask}>Execute</button>
         </div>
         {msg && <p className="mono text-xs text-emerald-300">{msg}</p>}
       </section>
@@ -149,6 +161,28 @@ export default function Page() {
           ))}
         </section>
       </div>
+
+      <section className="panel p-6 mt-6">
+        <h2 className="font-bold mb-3">API Keys (stored encrypted, never shown again)</h2>
+        <div className="grid md:grid-cols-4 gap-3 mb-3">
+          <select className="input" value={credProvider} onChange={e => setCredProvider(e.target.value)}>
+            <option value="openai">openai</option><option value="groq">groq</option>
+            <option value="anthropic">anthropic</option><option value="google">google</option>
+          </select>
+          <input className="input md:col-span-2" type="password" value={credKey} onChange={e => setCredKey(e.target.value)} placeholder="sk-… / gsk_… (your provider key)" />
+          <input className="input" value={credBaseUrl} onChange={e => setCredBaseUrl(e.target.value)} placeholder="base URL (optional)" />
+        </div>
+        <button className="btn" onClick={async () => {
+          await api("/api/v1/auth/credentials", { method: "POST", body: JSON.stringify({ provider: credProvider, api_key: credKey, base_url: credBaseUrl, is_default: true }) });
+          setCredKey(""); setMsg(`Saved ${credProvider} key (encrypted).`); refresh();
+        }}>Save Key</button>
+        <div className="mt-3">
+          {credentials.map((c: any) => (
+            <p key={c.provider} className="mono text-xs text-zinc-400 py-1">{c.provider} · {c.key_hint} {c.is_default ? "(default)" : ""} {c.base_url ? `· ${c.base_url}` : ""}</p>
+          ))}
+          {credentials.length === 0 && <p className="text-zinc-500 text-sm">No keys saved — running on mock LLM.</p>}
+        </div>
+      </section>
 
       {trace && (
         <section className="panel p-6 mt-6">
