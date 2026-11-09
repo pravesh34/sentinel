@@ -27,7 +27,7 @@ export default function TutorialPage() {
         <p>Scroll to <b>🔑 Add your AI API key</b>. Pick a provider, paste the key, click <b>Save key</b>.</p>
         <ul className="list-disc ml-5">
           <li><b>OpenAI</b> — <span className="mono">sk-…</span>, model <span className="mono">gpt-4o-mini</span></li>
-          <li><b>Groq</b> — <span className="mono">gsk_…</span>, free tier, model <span className="mono">llama-3.1-8b-instant</span> (easiest to start)</li>
+          <li><b>Groq</b> — <span className="mono">gsk_…</span>, free tier, model <span className="mono">openai/gpt-oss-20b</span> (easiest to start)</li>
           <li><b>Anthropic</b> — <span className="mono">sk-ant-…</span> · <b>Google Gemini</b> — AI Studio key</li>
         </ul>
         <p className="text-zinc-500">Keys are encrypted, never displayed again, and only used for your runs. Each card links to “Get a key”. Skip this step to use the free mock LLM.</p>

@@ -4,7 +4,7 @@ import { api } from "@/lib/api";
 
 const PROVIDERS: Record<string, { label: string; hint: string; url: string; modelExample: string }> = {
   openai: { label: "OpenAI", hint: "Key starts with sk-… Get it at platform.openai.com/api-keys", url: "https://platform.openai.com/api-keys", modelExample: "gpt-4o-mini" },
-  groq: { label: "Groq (free tier)", hint: "Key starts with gsk_… Get it at console.groq.com", url: "https://console.groq.com/keys", modelExample: "llama-3.1-8b-instant" },
+  groq: { label: "Groq (free tier)", hint: "Key starts with gsk_… Get it at console.groq.com", url: "https://console.groq.com/keys", modelExample: "openai/gpt-oss-20b" },
   anthropic: { label: "Anthropic", hint: "Key starts with sk-ant-… Get it at console.anthropic.com", url: "https://console.anthropic.com/settings/keys", modelExample: "claude-3-5-sonnet" },
   google: { label: "Google Gemini", hint: "Gemini API key from Google AI Studio", url: "https://aistudio.google.com/apikey", modelExample: "gemini-1.5-flash" },
 };

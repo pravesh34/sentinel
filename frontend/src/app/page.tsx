@@ -17,7 +17,7 @@ const EXAMPLES = [
 ];
 
 const PROVIDER_MODELS: Record<string, string> = {
-  mock: "mock-llm-1", openai: "gpt-4o-mini", groq: "llama-3.1-8b-instant",
+  mock: "mock-llm-1", openai: "gpt-4o-mini", groq: "openai/gpt-oss-20b",
   anthropic: "claude-3-5-sonnet", google: "gemini-1.5-flash",
 };
 

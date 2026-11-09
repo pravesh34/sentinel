@@ -6,7 +6,7 @@ PRICING: dict[tuple[str, str], tuple[float, float]] = {
     ("openai", "gpt-4o"): (0.0025, 0.01),
     ("google", "gemini-1.5-flash"): (0.000075, 0.0003),
     ("google", "gemini-1.5-pro"): (0.00125, 0.005),
-    ("groq", "llama-3.1-8b-instant"): (0.00005, 0.00008),
+    ("groq", "openai/gpt-oss-20b"): (0.00005, 0.00008),
     ("anthropic", "claude-3-5-sonnet"): (0.003, 0.015),
 }
 PRICING_VERSION = "2026-01"
