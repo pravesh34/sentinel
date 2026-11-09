@@ -1,0 +1,10 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body { background: #0f1115; }
+.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.panel { background: #171a21; border: 1px solid #262a33; border-radius: 12px; }
+.btn { background: #7c6cff; color: white; padding: 8px 16px; border-radius: 8px; font-weight: 600; }
+.btn:hover { background: #6a5cf5; }
+.input { background: #0f1115; border: 1px solid #2a2e38; border-radius: 8px; padding: 8px 12px; width: 100%; }
